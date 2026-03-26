@@ -1,16 +1,10 @@
 import os
 import requests
-import hashlib
 from datetime import datetime
-from twilio.rest import Client
 
-ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
-NETLIFY_API_TOKEN = os.environ["NETLIFY_API_TOKEN"]
-NETLIFY_SITE_ID   = os.environ["NETLIFY_SITE_ID"]
-TWILIO_SID        = os.environ["TWILIO_ACCOUNT_SID"]
-TWILIO_AUTH       = os.environ["TWILIO_AUTH_TOKEN"]
-TWILIO_FROM       = os.environ["TWILIO_FROM_NUMBER"]
-RECIPIENTS        = os.environ["RECIPIENT_NUMBERS"]
+ANTHROPIC_API_KEY      = os.environ["ANTHROPIC_API_KEY"]
+BEEHIIV_API_KEY        = os.environ["BEEHIIV_API_KEY"]
+BEEHIIV_PUBLICATION_ID = os.environ["BEEHIIV_PUBLICATION_ID"]
 
 TODAY     = datetime.now().strftime("%A, %B %-d, %Y")
 DATE_SLUG = datetime.now().strftime("%Y-%m-%d")
@@ -98,68 +92,27 @@ def generate_newsletter() -> str:
     return html.strip()
 
 
-def sha1(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8")).hexdigest()
-
-
-def upload_to_netlify(html: str) -> str:
-    filename = f"world-brief-{DATE_SLUG}.html"
-    print(f"Uploading {filename} to Netlify…")
-
-    headers = {
-        "Authorization": f"Bearer {NETLIFY_API_TOKEN}",
-        "Content-Type": "application/json",
-    }
-
-    deploy_res = requests.post(
-        f"https://api.netlify.com/api/v1/sites/{NETLIFY_SITE_ID}/deploys",
-        headers=headers,
+def publish_to_beehiiv(html: str) -> str:
+    print("Publishing to Beehiiv…")
+    res = requests.post(
+        f"https://api.beehiiv.com/v2/publications/{BEEHIIV_PUBLICATION_ID}/posts",
+        headers={
+            "Authorization": f"Bearer {BEEHIIV_API_KEY}",
+            "Content-Type": "application/json",
+        },
         json={
-            "files": {
-                f"/{filename}": sha1(html),
-                "/index.html": sha1(html),
-            }
+            "title": f"World Brief — {TODAY}",
+            "body": html,
+            "status": "confirmed",
+            "publish_type": "immediate",
         },
         timeout=30,
     )
-    deploy_res.raise_for_status()
-    deploy_id = deploy_res.json()["id"]
-
-    for path in [f"/{filename}", "/index.html"]:
-        up = requests.put(
-            f"https://api.netlify.com/api/v1/deploys/{deploy_id}/files{path}",
-            headers={
-                "Authorization": f"Bearer {NETLIFY_API_TOKEN}",
-                "Content-Type": "application/octet-stream",
-            },
-            data=html.encode("utf-8"),
-            timeout=30,
-        )
-        up.raise_for_status()
-
-    site = requests.get(
-        f"https://api.netlify.com/api/v1/sites/{NETLIFY_SITE_ID}",
-        headers={"Authorization": f"Bearer {NETLIFY_API_TOKEN}"},
-        timeout=15,
-    )
-    site.raise_for_status()
-    domain = site.json().get("default_domain", "")
-    url = f"https://{domain}/{filename}"
-    print(f"Live at: {url}")
+    res.raise_for_status()
+    post = res.json().get("data", {})
+    url = post.get("web_url", "")
+    print(f"Published: {url}")
     return url
-
-
-def send_texts(url: str):
-    client = Client(TWILIO_SID, TWILIO_AUTH)
-    numbers = [n.strip() for n in RECIPIENTS.split(",") if n.strip()]
-    body = (
-        f"World Brief — {TODAY}\n"
-        f"Last 48 hours in geopolitical news.\n\n"
-        f"{url}"
-    )
-    for number in numbers:
-        msg = client.messages.create(body=body, from_=TWILIO_FROM, to=number)
-        print(f"Sent to {number} — SID: {msg.sid}")
 
 
 if __name__ == "__main__":
@@ -168,9 +121,8 @@ if __name__ == "__main__":
     print(f"{'='*50}\n")
     try:
         html = generate_newsletter()
-        url  = upload_to_netlify(html)
-        send_texts(url)
-        print("\n✅ Done.")
+        url  = publish_to_beehiiv(html)
+        print(f"\n✅ Done. Live at: {url}")
     except Exception as e:
         print(f"\n❌ Failed: {e}")
         raise
